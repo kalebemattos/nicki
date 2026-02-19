@@ -338,19 +338,32 @@ function normalizarTexto(txt) {
     return txt.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().trim();
 }
 
+let cidadesDisponiveis = [];
+let cacheCidades = {};
+resumo = {}; // mantém variável global para compatibilidade
+
 async function carregarAno() {
 
     let ano = document.getElementById("anoSelect").value;
 
+    cidadesDisponiveis = [];
+    cacheCidades = {};
+    resumo = {};
+
     try {
-        const resResumo = await fetch(`dados_processados/${ano}/resumo.json`);
-        resumo = await resResumo.json();
+        // 🔹 Carrega lista de cidades
+        const resIndex = await fetch(`dados_processados/${ano}/index.json`);
+        const dataIndex = await resIndex.json();
+
+        cidadesDisponiveis = dataIndex.cidades;
+
     } catch (e) {
-        console.error("Erro ao carregar resumo:", e);
-        resumo = {};
+        console.error("Erro ao carregar index:", e);
+        return;
     }
 
     try {
+        // 🔹 Eleitorado continua sendo único
         const resEleitorado = await fetch(`dados_processados/${ano}/eleitorado.json`);
         eleitorado = await resEleitorado.json();
     } catch (e) {
@@ -361,36 +374,57 @@ async function carregarAno() {
     preencherCandidatos();
 }
 
+async function carregarCidade(nomeCidade) {
+
+    if (cacheCidades[nomeCidade]) {
+        return cacheCidades[nomeCidade];
+    }
+
+    let ano = document.getElementById("anoSelect").value;
+
+    const response = await fetch(`dados_processados/${ano}/${nomeCidade}.json`);
+    const dados = await response.json();
+
+    cacheCidades[nomeCidade] = dados;
+
+    return dados;
+}
 
 
 
-function preencherCandidatos() {
+async function preencherCandidatos() {
+
     let cargoSelecionado = document.getElementById("cargoSelect").value;
     let filtro = normalizarTexto(document.getElementById("buscarCandidato").value);
     let select = document.getElementById("candidatoSelect");
     select.innerHTML = "";
 
-    let chaveCargo = Object.keys(resumo).find(k => k.toUpperCase() === cargoSelecionado.toUpperCase());
-    if (!chaveCargo) return;
-
-    let dadosCargo = resumo[chaveCargo];
     let mapa = {};
 
-    let cidades = dadosCargo.CIDADES ? dadosCargo.CIDADES : dadosCargo;
+    for (let cidade of cidadesDisponiveis) {
 
-Object.values(cidades).forEach(cidade => {
+        let dadosCidadeArquivo = await carregarCidade(cidade);
 
-    if (!cidade.candidatos) return;
+        let chaveCargo = Object.keys(dadosCidadeArquivo)
+            .find(k => k.toUpperCase() === cargoSelecionado.toUpperCase());
 
-    cidade.candidatos.forEach(c => {
-        if (c.nome && c.nome !== "VOTO NULO" && c.nome !== "VOTO BRANCO") {
-    mapa[c.nome] = c.sq_candidato || null;
-}
-    });
-});
+        if (!chaveCargo) continue;
 
+        let nomeCidade = Object.keys(dadosCidadeArquivo[chaveCargo].CIDADES)[0];
 
-    let nomesFiltrados = Object.keys(mapa).sort().filter(nome => normalizarTexto(nome).includes(filtro));
+        let candidatos = dadosCidadeArquivo[chaveCargo]
+            .CIDADES[nomeCidade].candidatos;
+
+        candidatos.forEach(c => {
+            if (c.nome && !c.nome.includes("NULO") && !c.nome.includes("BRANCO")) {
+                mapa[c.nome] = c.sq_candidato;
+            }
+        });
+    }
+
+    let nomesFiltrados = Object.keys(mapa)
+        .sort()
+        .filter(nome => normalizarTexto(nome).includes(filtro));
 
     nomesFiltrados.forEach(nome => {
         let option = document.createElement("option");
@@ -400,7 +434,7 @@ Object.values(cidades).forEach(cidade => {
         select.appendChild(option);
     });
 
-    select.onchange = function() {
+    select.onchange = function () {
         if (this.selectedIndex === -1) return;
         candidatoSelecionado = this.value;
         sqSelecionado = this.options[this.selectedIndex].dataset.sq;
@@ -408,8 +442,10 @@ Object.values(cidades).forEach(cidade => {
         atualizarFoto();
         mostrarAnalise();
     };
+
     if (nomesFiltrados.length > 0) select.onchange();
 }
+
 
 function atualizarFoto() {
     if (!sqSelecionado) return;
@@ -432,70 +468,65 @@ function atualizarFoto() {
 }
 
 
-function mostrarAnalise() {
+async function mostrarAnalise() {
+
     if (!candidatoSelecionado) return;
+
     let cargoSelecionado = document.getElementById("cargoSelect").value;
     let filtroCidade = normalizarTexto(document.getElementById("buscarCidade").value);
     let tbody = document.getElementById("resultado");
     tbody.innerHTML = "";
 
-    let chaveCargo = Object.keys(resumo).find(k => k.toUpperCase() === cargoSelecionado.toUpperCase());
-    if (!chaveCargo) return;
+    let totalVotosGeral = 0;
+    let totalRJ = 0;
 
-    let dadosCargo = resumo[chaveCargo];
+    for (let cidade of cidadesDisponiveis) {
 
-// Compatibilidade 2010/2014
-let cidades = dadosCargo.CIDADES ? dadosCargo.CIDADES : dadosCargo;
+        let dadosCidadeArquivo = await carregarCidade(cidade);
 
-// Se não existir TOTAL_RJ, calcular manualmente
-let totalRJ = dadosCargo.TOTAL_RJ;
+        let chaveCargo = Object.keys(dadosCidadeArquivo)
+            .find(k => k.toUpperCase() === cargoSelecionado.toUpperCase());
 
-if (!totalRJ) {
-    totalRJ = 0;
-    Object.values(cidades).forEach(c => {
-        if (c.total_validos) totalRJ += c.total_validos;
-    });
-}
-let totalVotosGeral = 0;
+        if (!chaveCargo) continue;
 
+        totalRJ = dadosCidadeArquivo[chaveCargo].TOTAL_RJ;
 
-    Object.keys(cidades).sort().forEach(cidadeNome => {
-        if (filtroCidade && !normalizarTexto(cidadeNome).includes(filtroCidade)) return;
-        let dadosCidade = cidades[cidadeNome];
+        let nomeCidade = Object.keys(dadosCidadeArquivo[chaveCargo].CIDADES)[0];
+
+        if (filtroCidade && !normalizarTexto(nomeCidade).includes(filtroCidade)) continue;
+
+        let dadosCidade = dadosCidadeArquivo[chaveCargo].CIDADES[nomeCidade];
+
         let candidato = dadosCidade.candidatos.find(c =>
-    normalizarTexto(c.nome) === normalizarTexto(candidatoSelecionado)
-);
+            normalizarTexto(c.nome) === normalizarTexto(candidatoSelecionado)
+        );
 
-if (!candidato) {
-    candidato = dadosCidade.candidatos.find(c =>
-        normalizarTexto(c.nome).includes(normalizarTexto(candidatoSelecionado))
-    );
-}
-
-if (!candidato) return;
-
-        if (!candidato) return;
+        if (!candidato) continue;
 
         totalVotosGeral += candidato.votos;
+
         let percentualCidade = ((candidato.votos / dadosCidade.total_validos) * 100).toFixed(2);
         let percentualRJ = ((candidato.votos / totalRJ) * 100).toFixed(4);
 
         let tr = document.createElement("tr");
-tr.ondblclick = () => abrirBairros(cidadeNome);
 
-tr.innerHTML = `
-    <td>${cidadeNome}</td>
-    <td>${candidato.votos.toLocaleString()}</td>
-    <td>${dadosCidade.total_validos.toLocaleString()}</td>
-    <td>${percentualCidade}%</td>
-    <td>${candidato.posicao}º</td>
-    <td>${percentualRJ}%</td>
-    <td><button onclick="abrirModal('${cidadeNome}')">Perfil</button></td>
-`;
+        tr.innerHTML = `
+            <td>${nomeCidade}</td>
+            <td>${candidato.votos.toLocaleString()}</td>
+            <td>${dadosCidade.total_validos.toLocaleString()}</td>
+            <td>${percentualCidade}%</td>
+            <td>${candidato.posicao}º</td>
+            <td>${percentualRJ}%</td>
+            <td><button onclick="abrirModal('${nomeCidade}')">Perfil</button></td>
+        `;
+
         tbody.appendChild(tr);
-    });
-    document.getElementById("totalVotosCandidato").innerText = "Total no Estado: " + totalVotosGeral.toLocaleString() + " votos";
+    }
+
+    document.getElementById("totalVotosCandidato").innerText =
+        "Total no Estado: " + totalVotosGeral.toLocaleString() + " votos";
 }
+
 async function abrirBairros(cidadeNome) {
 
     let ano = document.getElementById("anoSelect").value;
