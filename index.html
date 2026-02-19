@@ -352,7 +352,8 @@ async function carregarAno() {
 
     try {
         // 🔹 Carrega lista de cidades
-        const resIndex = await fetch(`dados_processados/${ano}/index.json`);
+        const resIndex = await fetch(`dados_processados/${ano}/cidades/index.json`)
+;
         const dataIndex = await resIndex.json();
 
         cidadesDisponiveis = dataIndex.cidades;
@@ -382,7 +383,7 @@ async function carregarCidade(nomeCidade) {
 
     let ano = document.getElementById("anoSelect").value;
 
-    const response = await fetch(`dados_processados/${ano}/${nomeCidade}.json`);
+    const response = await fetch(`dados_processados/${ano}/cidades/${nomeCidade}.json`);
     const dados = await response.json();
 
     cacheCidades[nomeCidade] = dados;
